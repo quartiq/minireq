@@ -31,18 +31,6 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-python@v1
-      - name: Install Pylint
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install pylint
-
-      - name: Run Pylint
-        working-directory: py/miniconf-mqtt
-        run: |
-          python -m pip install .
-          python -m pylint miniconf
-
   documentation:
     runs-on: ubuntu-latest
     steps:
@@ -137,30 +125,3 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: test
-
-  examples:
-    runs-on: ubuntu-20.04
-    strategy:
-      matrix:
-        example:
-          - mqtt
-    steps:
-      - uses: actions/checkout@v2
-
-      - name: Start Mosquitto
-        run: |
-          sudo apt-get install mosquitto
-          sudo service mosquitto start
-
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          override: true
-          toolchain: stable
-          profile: minimal
-
-      - name: Example ${{matrix.example}}
-        uses: actions-rs/cargo@v1
-        with:
-          command: run
-          args: --example ${{matrix.example}}
