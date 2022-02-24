@@ -69,7 +69,8 @@ mod sm {
     impl StateMachineContext for Context {}
 }
 
-type Handler<Context, E> = fn(&mut Context, &str, &[u8]) -> Result<Response, Error<E>>;
+type Handler<Context, E, const RESPONSE_SIZE: usize> =
+    fn(&mut Context, &str, &[u8]) -> Result<Response<RESPONSE_SIZE>, Error<E>>;
 
 /// MQTT request/response interface.
 pub struct Minireq<Context, Stack, Clock, const MESSAGE_SIZE: usize, const NUM_REQUESTS: usize>
@@ -77,8 +78,11 @@ where
     Stack: TcpClientStack,
     Clock: embedded_time::Clock,
 {
-    handlers:
-        heapless::LinearMap<String<MAX_TOPIC_LENGTH>, Handler<Context, Stack::Error>, NUM_REQUESTS>,
+    handlers: heapless::LinearMap<
+        String<MAX_TOPIC_LENGTH>,
+        Handler<Context, Stack::Error, MESSAGE_SIZE>,
+        NUM_REQUESTS,
+    >,
     mqtt: minimq::Minimq<Stack, Clock, MESSAGE_SIZE, 1>,
     prefix: String<MAX_TOPIC_LENGTH>,
     state: sm::StateMachine<sm::Context>,
@@ -133,7 +137,7 @@ where
     pub fn register(
         &mut self,
         topic: &str,
-        handler: Handler<Context, Stack::Error>,
+        handler: Handler<Context, Stack::Error, MESSAGE_SIZE>,
     ) -> Result<bool, Error<Stack::Error>> {
         self.handlers
             .insert(String::from(topic), handler)
@@ -144,10 +148,10 @@ where
     fn _handle_mqtt<F>(&mut self, mut f: F) -> Result<(), Error<Stack::Error>>
     where
         F: FnMut(
-            Handler<Context, Stack::Error>,
+            Handler<Context, Stack::Error, MESSAGE_SIZE>,
             &str,
             &[u8],
-        ) -> Result<Response, Error<Stack::Error>>,
+        ) -> Result<Response<MESSAGE_SIZE>, Error<Stack::Error>>,
     {
         let Self {
             handlers,
@@ -239,10 +243,10 @@ where
     pub fn poll<F>(&mut self, f: F) -> Result<(), Error<Stack::Error>>
     where
         F: FnMut(
-            Handler<Context, Stack::Error>,
+            Handler<Context, Stack::Error, MESSAGE_SIZE>,
             &str,
             &[u8],
-        ) -> Result<Response, Error<Stack::Error>>,
+        ) -> Result<Response<MESSAGE_SIZE>, Error<Stack::Error>>,
     {
         if !self.mqtt.client.is_connected() {
             // Note(unwrap): It's always safe to unwrap the reset event. All states must handle it.

@@ -44,7 +44,7 @@ async fn client_task() {
     let mut continue_testing = true;
     loop {
         mqtt.poll(|_client, _topic, message, _properties| {
-            let data: Response = serde_json_core::from_slice(message).unwrap().0;
+            let data: Response<128> = serde_json_core::from_slice(message).unwrap().0;
             assert!(data.code != 0);
             continue_testing = false;
         })

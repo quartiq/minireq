@@ -3,17 +3,14 @@ use serde::{Deserialize, Serialize};
 
 use heapless::{String, Vec};
 
-// The maximum size of a response.
-const MAX_RESPONSE_SIZE: usize = 128;
-
 /// Responses are always generated as a result of handling an in-bound request.
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
-pub struct Response {
+pub struct Response<const MAX_RESPONSE_SIZE: usize> {
     pub code: i32,
     pub data: Vec<u8, MAX_RESPONSE_SIZE>,
 }
 
-impl Response {
+impl<const MAX_RESPONSE_SIZE: usize> Response<MAX_RESPONSE_SIZE> {
     /// A response without data indicating success.
     pub fn ok() -> Self {
         Self::custom(0, "Ok")
