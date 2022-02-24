@@ -24,7 +24,7 @@ use minimq::{
 
 use serde_json_core::heapless::{String, Vec};
 
-use log::{info, warn};
+use log::info;
 
 pub mod response;
 pub use response::Response;
@@ -72,19 +72,20 @@ mod sm {
 type Handler<Context, E> = fn(&mut Context, &str, &[u8]) -> Result<Response, Error<E>>;
 
 /// MQTT request/response interface.
-pub struct Minireq<Context, Stack, Clock, const MESSAGE_SIZE: usize>
+pub struct Minireq<Context, Stack, Clock, const MESSAGE_SIZE: usize, const NUM_REQUESTS: usize>
 where
     Stack: TcpClientStack,
     Clock: embedded_time::Clock,
 {
-    // TODO: Maybe use a hash-based IndexMap?
-    requests: heapless::LinearMap<String<60>, Handler<Context, Stack::Error>, 10>,
+    handlers:
+        heapless::LinearMap<String<MAX_TOPIC_LENGTH>, Handler<Context, Stack::Error>, NUM_REQUESTS>,
     mqtt: minimq::Minimq<Stack, Clock, MESSAGE_SIZE, 1>,
     prefix: String<MAX_TOPIC_LENGTH>,
     state: sm::StateMachine<sm::Context>,
 }
 
-impl<Context, Stack, Clock, const MESSAGE_SIZE: usize> Minireq<Context, Stack, Clock, MESSAGE_SIZE>
+impl<Context, Stack, Clock, const MESSAGE_SIZE: usize, const NUM_REQUESTS: usize>
+    Minireq<Context, Stack, Clock, MESSAGE_SIZE, NUM_REQUESTS>
 where
     Stack: TcpClientStack,
     Clock: embedded_time::Clock + Clone,
@@ -117,7 +118,7 @@ where
         write!(&mut prefix, "{}/command", device_prefix).map_err(|_| Error::PrefixTooLong)?;
 
         Ok(Self {
-            requests: heapless::LinearMap::default(),
+            handlers: heapless::LinearMap::default(),
             mqtt,
             prefix,
             state: sm::StateMachine::new(sm::Context),
@@ -129,12 +130,12 @@ where
     /// # Args
     /// * `topic` - The request to register the provided handler with.
     /// * `handler` - The handler function to be called when the request occurs.
-    pub fn register_request(
+    pub fn register(
         &mut self,
         topic: &str,
         handler: Handler<Context, Stack::Error>,
     ) -> Result<bool, Error<Stack::Error>> {
-        self.requests
+        self.handlers
             .insert(String::from(topic), handler)
             .map(|prev| prev.is_none())
             .map_err(|_| Error::RegisterFailed)
@@ -149,7 +150,7 @@ where
         ) -> Result<Response, Error<Stack::Error>>,
     {
         let Self {
-            requests,
+            handlers,
             mqtt,
             prefix,
             ..
@@ -171,17 +172,20 @@ where
                 }
             };
 
+            // Perform the action
+            let response = match handlers.get(&String::from(path)) {
+                Some(&handler) => f(handler, path, message).unwrap_or_else(Response::error),
+                None => Response::custom(-1, "Unregistered request"),
+            };
+
             // Extract the response topic
-            let response_topic = match properties.iter().find_map(|prop| {
-                if let Property::ResponseTopic(topic) = prop {
-                    Some(topic)
-                } else {
-                    None
-                }
-            }) {
-                Some(topic) => topic,
-                None => {
-                    warn!("Ignoring inbound request with no response topic");
+            let response_topic = match properties
+                .iter()
+                .find(|prop| matches!(prop, Property::ResponseTopic(_)))
+            {
+                Some(Property::ResponseTopic(topic)) => topic,
+                _ => {
+                    info!("No response topic was provided with request: `{}`", path);
                     return;
                 }
             };
@@ -195,12 +199,6 @@ where
                 // Note(unwrap): We guarantee there is space for this item.
                 response_props.push(*cd).unwrap();
             }
-
-            // Perform the action
-            let response = match requests.get(&String::from(path)) {
-                Some(&handler) => f(handler, path, message).unwrap_or_else(Response::error),
-                None => Response::custom(-1, "Unregistered request"),
-            };
 
             // Note(unwrap): We currently have no means of indicating a response that is too long.
             // TODO: We should return this as an error in the future.

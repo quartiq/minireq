@@ -66,7 +66,7 @@ async fn main() {
     tokio::task::spawn(async move { client_task().await });
 
     // Construct a settings configuration interface.
-    let mut interface: minireq::Minireq<bool, _, _, 256> = minireq::Minireq::new(
+    let mut interface: minireq::Minireq<bool, _, _, 256, 1> = minireq::Minireq::new(
         Stack::default(),
         "tester-device",
         "minireq/integration/device",
@@ -76,7 +76,7 @@ async fn main() {
     .unwrap();
 
     interface
-        .register_request("test", |exit, _req, _data| {
+        .register("test", |exit, _req, _data| {
             *exit = true;
             Ok(Response::ok())
         })
