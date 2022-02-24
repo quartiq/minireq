@@ -92,7 +92,7 @@ impl<Context, Stack, Clock, const MESSAGE_SIZE: usize, const NUM_REQUESTS: usize
     Minireq<Context, Stack, Clock, MESSAGE_SIZE, NUM_REQUESTS>
 where
     Stack: TcpClientStack,
-    Clock: embedded_time::Clock + Clone,
+    Clock: embedded_time::Clock,
 {
     /// Construct a new MQTT request handler.
     ///
@@ -109,7 +109,7 @@ where
         broker: IpAddr,
         clock: Clock,
     ) -> Result<Self, Error<Stack::Error>> {
-        let mut mqtt = minimq::Minimq::new(broker, client_id, stack, clock.clone())?;
+        let mut mqtt = minimq::Minimq::new(broker, client_id, stack, clock)?;
 
         // Note(unwrap): The client was just created, so it's valid to set a keepalive interval
         // now, since we're not yet connected to the broker.

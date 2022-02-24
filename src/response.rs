@@ -22,7 +22,7 @@ impl<const MAX_RESPONSE_SIZE: usize> Response<MAX_RESPONSE_SIZE> {
         if write!(&mut msg, "{:?}", err).is_err() {
             msg = String::from("Error");
         }
-        Self::custom(-1, &msg.as_str())
+        Self::custom(-1, &msg)
     }
 
     /// A response with json-serialized data indicating success.
