@@ -7,8 +7,7 @@ license = "MIT"
 description = "Lightweight support for MQTT-based request/response handling interfaces"
 keywords = ["request", "embedded", "no_std", "configuration", "mqtt"]
 categories = ["no-std", "config", "embedded", "parsing"]
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+repository = "https://github.com/quartiq/minireq"
 
 [dependencies]
 minimq = "0.5"
