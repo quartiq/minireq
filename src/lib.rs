@@ -24,7 +24,7 @@ use minimq::{
 
 use serde_json_core::heapless::{String, Vec};
 
-use log::info;
+use log::{info, warn};
 
 pub mod response;
 pub use response::Response;
@@ -207,16 +207,12 @@ where
             let mut serialized_response = [0u8; MESSAGE_SIZE];
             let len = match serde_json_core::to_slice(&response, &mut serialized_response) {
                 Ok(len) => len,
-                Err(_) => {
-                    // Note(unwrap): This may still panic if the message size is exceptionally
-                    // small, but at that point there's not much more we can do to transmit, so
-                    // panics are likely the best bet, as something needs to change (e.g. this
-                    // library may not be appropriate).
-                    serde_json_core::to_slice(
-                        &Response::<MESSAGE_SIZE>::custom(response.code, "Truncated"),
-                        &mut serialized_response,
-                    )
-                    .unwrap()
+                Err(err) => {
+                    warn!(
+                        "Response could not be serialized into MQTT message: {:?}",
+                        err
+                    );
+                    return;
                 }
             };
 
