@@ -204,10 +204,21 @@ where
                 response_props.push(*cd).unwrap();
             }
 
-            // Note(unwrap): We currently have no means of indicating a response that is too long.
-            // TODO: We should return this as an error in the future.
             let mut serialized_response = [0u8; MESSAGE_SIZE];
-            let len = serde_json_core::to_slice(&response, &mut serialized_response).unwrap();
+            let len = match serde_json_core::to_slice(&response, &mut serialized_response) {
+                Ok(len) => len,
+                Err(_) => {
+                    // Note(unwrap): This may still panic if the message size is exceptionally
+                    // small, but at that point there's not much more we can do to transmit, so
+                    // panics are likely the best bet, as something needs to change (e.g. this
+                    // library may not be appropriate).
+                    serde_json_core::to_slice(
+                        &Response::<MESSAGE_SIZE>::custom(response.code, "Truncated"),
+                        &mut serialized_response,
+                    )
+                    .unwrap()
+                }
+            };
 
             client
                 .publish(
