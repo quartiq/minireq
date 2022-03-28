@@ -2,8 +2,12 @@
 name = "minireq"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+authors = ["Ryan Summers <ryan.summers@vertigo-designs.com>"]
+license = "MIT"
+description = "Lightweight support for MQTT-based request/response handling interfaces"
+keywords = ["request", "embedded", "no_std", "configuration", "mqtt"]
+categories = ["no-std", "config", "embedded", "parsing"]
+repository = "https://github.com/quartiq/minireq"
 
 [dependencies]
 minimq = "0.5"
@@ -18,3 +22,4 @@ std-embedded-nal = "0.1"
 std-embedded-time = "0.1"
 tokio = { version = "1.9", features = ["rt-multi-thread", "time", "macros"] }
 env_logger = "0.9"
+embedded-nal = "0.6"
