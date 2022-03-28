@@ -1,20 +1,75 @@
 #![no_std]
-/// MQTT Request/response Handling
-///
-/// # Overview
-/// This library is intended to be an easy way to handle inbound requests automatically.
-///
-/// Handler functions can be associated with the library to be automatically called whenever a
-/// specified request is received, and the handler will automatically be invoked when the request
-/// is received.
-///
-/// ## Limitations
-/// * The `poll()` function has a somewhat odd signature (using a function to provide the `Context`
-/// and call the handler) due to required compatibility with RTIC and unlocked resources.
-///
-/// * Handlers may only be closures that do not capture any local resources. Instead, move local
-/// captures into the `Context`, which will be provided to the handler in the function call.
-///
+//! MQTT Request/response Handling
+//!
+//! # Overview
+//! This library is intended to be an easy way to handle inbound requests automatically.
+//!
+//! Handler functions can be associated with the library to be automatically called whenever a
+//! specified request is received, and the handler will automatically be invoked with the request
+//! data.
+//!
+//! ## Limitations
+//! * The `poll()` function has a somewhat odd signature (using a function to provide the `Context`
+//! and call the handler) due to required compatibility with RTIC and unlocked resources.
+//!
+//! * Handlers may only be closures that do not capture any local resources. Instead, move local
+//! captures into the `Context`, which will be provided to the handler in the function call.
+//!
+//! ## Example
+//! ```no_run
+//! # use embedded_nal::TcpClientStack;
+//! type Error = minireq::Error<
+//!      // Your network stack error type
+//! #    <std_embedded_nal::Stack as TcpClientStack>::Error
+//! >;
+//!
+//! struct Context {}
+//!
+//! #[derive(serde::Serialize, serde::Deserialize)]
+//! struct Request {
+//!     data: u32,
+//! }
+//!
+//! // Handler function for processing an incoming request.
+//! pub fn handler(
+//!     context: &mut Context,
+//!     cmd: &str,
+//!     data: &[u8]
+//! ) -> Result<minireq::Response<128>, Error> {
+//!     // Deserialize the request.
+//!     let mut request: Request = serde_json_core::from_slice(data)?.0;
+//!
+//!     request.data = request.data.wrapping_add(1);
+//!
+//!     Ok(minireq::Response::data(request))
+//! }
+//!
+//! // Construct the client
+//! let mut client: minireq::Minireq<Context, _, _, 128, 1> = minireq::Minireq::new(
+//!       // Constructor arguments
+//! #     std_embedded_nal::Stack::default(),
+//! #     "test",
+//! #     "minireq",
+//! #     "127.0.0.1".parse().unwrap(),
+//! #     std_embedded_time::StandardClock::default(),
+//! )
+//! .unwrap();
+//!
+//! // Whenever the `/test` command is received, call the associated handler.
+//! // You may add as many handlers as you would like.
+//! client.register("/test", handler).unwrap();
+//!
+//! // ...
+//!
+//! loop {
+//!     // In your main execution loop, continually poll the client to process incoming requests.
+//!     client.poll(|handler, command, data| {
+//!         let mut context = Context {};
+//!         handler(&mut context, command, data)
+//!     }).unwrap();
+//! }
+//! ```
+//!
 use core::fmt::Write;
 
 use minimq::{
