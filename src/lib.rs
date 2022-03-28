@@ -79,7 +79,7 @@ use minimq::{
 
 use serde_json_core::heapless::{String, Vec};
 
-use log::info;
+use log::{info, warn};
 
 pub mod response;
 pub use response::Response;
@@ -259,10 +259,17 @@ where
                 response_props.push(*cd).unwrap();
             }
 
-            // Note(unwrap): We currently have no means of indicating a response that is too long.
-            // TODO: We should return this as an error in the future.
             let mut serialized_response = [0u8; MESSAGE_SIZE];
-            let len = serde_json_core::to_slice(&response, &mut serialized_response).unwrap();
+            let len = match serde_json_core::to_slice(&response, &mut serialized_response) {
+                Ok(len) => len,
+                Err(err) => {
+                    warn!(
+                        "Response could not be serialized into MQTT message: {:?}",
+                        err
+                    );
+                    return;
+                }
+            };
 
             client
                 .publish(
