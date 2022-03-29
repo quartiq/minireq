@@ -24,7 +24,7 @@ use minimq::{
 
 use serde_json_core::heapless::{String, Vec};
 
-use log::info;
+use log::{debug, info};
 
 pub mod response;
 pub use response::Response;
@@ -61,10 +61,14 @@ impl<E> From<minimq::Error<E>> for Error<E> {
 mod sm {
     smlang::statemachine! {
         transitions: {
-            *Init + Connected / reset = Subscribing,
-            Subscribing + Subscribed = Idle,
-            Idle + PendingRepublish = Republishing,
-            Republishing + RepublishComplete = Active,
+            *Init + Update [is_connected] / reset = Subscribing,
+            Subscribing + Update [subscribe] = Republishing,
+            Republishing + Update [republish] = Active,
+
+            // We can always begin republishing again from the active processing state.
+            Active + PendingRepublish = Republishing,
+
+            // All states can reset if the MQTT broker connection is lost.
             _ + Reset = Init,
         }
     }
@@ -78,25 +82,16 @@ struct HandlerMeta<Context, E, const RESPONSE_SIZE: usize> {
     republished: bool,
 }
 
-pub type Minireq<Context, Stack, Clock, const MESSAGE_SIZE: usize, const NUM_REQUESTS: usize> = sm::StateMachine<MinireqContext<Context, Stack, Clock, MESSAGE_SIZE, NUM_REQUESTS>>;
-
-/// MQTT request/response interface.
-pub struct MinireqContext<Context, Stack, Clock, const MESSAGE_SIZE: usize, const NUM_REQUESTS: usize>
+pub struct Minireq<Context, Stack, Clock, const MESSAGE_SIZE: usize, const NUM_REQUESTS: usize>
 where
     Stack: TcpClientStack,
     Clock: embedded_time::Clock,
 {
-    handlers: heapless::LinearMap<
-        String<MAX_TOPIC_LENGTH>,
-        HandlerMeta<Context, Stack::Error, MESSAGE_SIZE>,
-        NUM_REQUESTS,
-    >,
-    mqtt: minimq::Minimq<Stack, Clock, MESSAGE_SIZE, 1>,
-    prefix: String<MAX_TOPIC_LENGTH>,
+    machine: sm::StateMachine<MinireqContext<Context, Stack, Clock, MESSAGE_SIZE, NUM_REQUESTS>>,
 }
 
 impl<Context, Stack, Clock, const MESSAGE_SIZE: usize, const NUM_REQUESTS: usize>
-    MinireqContext<Context, Stack, Clock, MESSAGE_SIZE, NUM_REQUESTS>
+    Minireq<Context, Stack, Clock, MESSAGE_SIZE, NUM_REQUESTS>
 where
     Stack: TcpClientStack,
     Clock: embedded_time::Clock,
@@ -128,24 +123,119 @@ where
         let mut prefix: String<MAX_TOPIC_LENGTH> = String::new();
         write!(&mut prefix, "{}/command", device_prefix).map_err(|_| Error::PrefixTooLong)?;
 
-        Ok(Self {
+        let context = MinireqContext {
             handlers: heapless::LinearMap::default(),
             mqtt,
             prefix,
+        };
+
+        Ok(Self {
+            machine: sm::StateMachine::new(context),
         })
     }
 }
 
-impl<Context, Stack, Clock, const MESSAGE_SIZE: usize, const NUM_REQUESTS: usize> sm::StateMachineContext for
-    MinireqContext<Context, Stack, Clock, MESSAGE_SIZE, NUM_REQUESTS>
+/// MQTT request/response interface.
+pub struct MinireqContext<
+    Context,
+    Stack,
+    Clock,
+    const MESSAGE_SIZE: usize,
+    const NUM_REQUESTS: usize,
+> where
+    Stack: TcpClientStack,
+    Clock: embedded_time::Clock,
+{
+    handlers: heapless::LinearMap<
+        String<MAX_TOPIC_LENGTH>,
+        HandlerMeta<Context, Stack::Error, MESSAGE_SIZE>,
+        NUM_REQUESTS,
+    >,
+    mqtt: minimq::Minimq<Stack, Clock, MESSAGE_SIZE, 1>,
+    prefix: String<MAX_TOPIC_LENGTH>,
+}
+
+impl<Context, Stack, Clock, const MESSAGE_SIZE: usize, const NUM_REQUESTS: usize>
+    sm::StateMachineContext for MinireqContext<Context, Stack, Clock, MESSAGE_SIZE, NUM_REQUESTS>
 where
     Stack: TcpClientStack,
     Clock: embedded_time::Clock,
 {
+    /// Reset the republish state of all of the handlers.
     fn reset(&mut self) {
-        for HandlerMeta { ref mut republished, .. } in self.handlers.values_mut() {
+        for HandlerMeta {
+            ref mut republished,
+            ..
+        } in self.handlers.values_mut()
+        {
             *republished = false;
         }
+    }
+
+    /// Guard to handle subscription to the command prefix.
+    ///
+    /// # Returns
+    /// Error if the command prefix has not yet been subscribed to.
+    fn subscribe(&mut self) -> Result<(), ()> {
+        // Note(unwrap): We ensure that this storage is always sufficiently large to store
+        // the wildcard post-fix for MQTT.
+        let mut prefix: String<{ MAX_TOPIC_LENGTH + 2 }> = String::from(self.prefix.as_str());
+        prefix.push_str("/#").unwrap();
+
+        self.mqtt.client.subscribe(&prefix, &[]).map_err(|_| ())
+    }
+
+    /// Guard to check for an MQTT broker connection.
+    ///
+    /// # Returns
+    /// Ok if the MQTT broker is connected, false otherwise.
+    fn is_connected(&mut self) -> Result<(), ()> {
+        if self.mqtt.client.is_connected() {
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    /// Guard to handle republishing all of the command information.
+    ///
+    /// # Returns
+    /// Ok if all command information has been republished. Error if there are still more to be
+    /// published.
+    fn republish(&mut self) -> Result<(), ()> {
+        let MinireqContext {
+            mqtt,
+            handlers,
+            prefix,
+            ..
+        } = self;
+
+        for (command_prefix, HandlerMeta { republished, .. }) in handlers
+            .iter_mut()
+            .filter(|(_, HandlerMeta { republished, .. })| !republished)
+        {
+            // Note(unwrap): The unwrap cannot fail because of restrictions on the max topic
+            // length.
+            let mut topic: String<{ 2 * MAX_TOPIC_LENGTH + 1 }> = String::from(prefix.as_str());
+            topic.push_str("/").unwrap();
+            topic.push_str(command_prefix).unwrap();
+
+            mqtt.client
+                .publish(
+                    &topic,
+                    "TODO".as_bytes(),
+                    // TODO: When Minimq supports more QoS levels, this should be increased to
+                    // ensure that the client has received it at least once.
+                    QoS::AtMostOnce,
+                    Retain::Retained,
+                    &[REPUBLISH_CORRELATION_DATA],
+                )
+                .map_err(|_| ())?;
+
+            *republished = true;
+        }
+
+        Ok(())
     }
 }
 
@@ -165,10 +255,28 @@ where
         topic: &str,
         handler: Handler<Context, Stack::Error, MESSAGE_SIZE>,
     ) -> Result<bool, Error<Stack::Error>> {
-        self.context_mut().handlers
-            .insert(String::from(topic), HandlerMeta { handler, republished: false })
+        let added = self
+            .machine
+            .context_mut()
+            .handlers
+            .insert(
+                String::from(topic),
+                HandlerMeta {
+                    handler,
+                    republished: false,
+                },
+            )
             .map(|prev| prev.is_none())
-            .map_err(|_| Error::RegisterFailed)
+            .map_err(|_| Error::RegisterFailed)?;
+
+        // Force a republish of the newly-registered command after adding it. We ignore failures of
+        // event processing here since that would imply we are adding the handler before we've even
+        // gotten to the republish state.
+        self.machine
+            .process_event(sm::Events::PendingRepublish)
+            .ok();
+
+        Ok(added)
     }
 
     fn _handle_mqtt<F>(&mut self, mut f: F) -> Result<(), Error<Stack::Error>>
@@ -184,9 +292,18 @@ where
             mqtt,
             prefix,
             ..
-        } = self.context_mut();
+        } = self.machine.context_mut();
 
         match mqtt.poll(|client, topic, message, properties| {
+            // If the incoming message has republish correlation data, ignore it.
+            if properties
+                .iter()
+                .any(|&prop| prop == REPUBLISH_CORRELATION_DATA)
+            {
+                debug!("Ignoring republish data");
+                return;
+            }
+
             let path = match topic.strip_prefix(prefix.as_str()) {
                 // For paths, we do not want to include the leading slash.
                 Some(path) => {
@@ -251,43 +368,10 @@ where
             Err(minimq::Error::SessionReset) => {
                 // Note(unwrap): It's always safe to unwrap the reset event. All states must handle
                 // it.
-                self.process_event(sm::Events::Reset).unwrap();
+                self.machine.process_event(sm::Events::Reset).unwrap();
                 Ok(())
             }
             Err(other) => Err(Error::Mqtt(other)),
-        }
-    }
-
-    fn _handle_republish(&mut self) {
-        let MinireqContext {
-            mqtt,
-            handlers,
-            prefix,
-            ..
-        } = self.context_mut();
-
-        for (command_prefix, HandlerMeta { republished, .. })  in handlers.iter_mut().filter(|(_, HandlerMeta { republished, .. })| !republished ) {
-
-            // Note(unwrap): The unwrap cannot fail because of restrictions on the max topic
-            // length.
-            let topic: String<{2 * MAX_TOPIC_LENGTH}> = String::from(prefix.as_str());
-            prefix.push_str(command_prefix).unwrap();
-
-            if mqtt.client
-                .publish(
-                    &topic,
-                    "TODO".as_bytes(),
-                    // TODO: When Minimq supports more QoS levels, this should be increased to
-                    // ensure that the client has received it at least once.
-                    QoS::AtMostOnce,
-                    Retain::Retained,
-                    &[REPUBLISH_CORRELATION_DATA],
-                )
-                .is_err() {
-                break;
-            }
-
-            *republished = true;
         }
     }
 
@@ -307,36 +391,12 @@ where
             &[u8],
         ) -> Result<Response<MESSAGE_SIZE>, Error<Stack::Error>>,
     {
-        if !self.context_mut().mqtt.client.is_connected() {
+        if !self.machine.context_mut().mqtt.client.is_connected() {
             // Note(unwrap): It's always safe to unwrap the reset event. All states must handle it.
-            self.process_event(sm::Events::Reset).unwrap();
+            self.machine.process_event(sm::Events::Reset).unwrap();
         }
 
-        match *self.state() {
-            sm::States::Init => {
-                if self.context_mut().mqtt.client.is_connected() {
-                    // Note(unwrap): It's always safe to process this event in the INIT state.
-                    self.process_event(sm::Events::Connected).unwrap();
-                }
-            }
-            sm::States::Subscribing => {
-                // Note(unwrap): We ensure that this storage is always sufficiently large to store
-                // the wildcard post-fix for MQTT.
-                let mut prefix: String<{ MAX_TOPIC_LENGTH + 2 }> =
-                    String::from(self.context().prefix.as_str());
-                prefix.push_str("/#").unwrap();
-
-                if self.context_mut().mqtt.client.subscribe(&prefix, &[]).is_ok() {
-                    // Note(unwrap): It is always safe to process a Subscribed event in this state.
-                    self.process_event(sm::Events::Subscribed).unwrap();
-                }
-            }
-            sm::States::Republishing => {
-                self._handle_republish();
-
-            }
-            sm::States::Active => {}
-        }
+        self.machine.process_event(sm::Events::Update).ok();
 
         self._handle_mqtt(f)
     }
