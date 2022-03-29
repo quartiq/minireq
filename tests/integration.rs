@@ -1,4 +1,3 @@
-use minimq;
 use minireq::Response;
 use std_embedded_nal::Stack;
 use std_embedded_time::StandardClock;
