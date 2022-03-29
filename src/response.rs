@@ -1,13 +1,13 @@
 use core::fmt::{Debug, Write};
 use serde::{Deserialize, Serialize};
 
-use heapless::{String, Vec};
+use heapless::String;
 
 /// Responses are always generated as a result of handling an in-bound request.
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct Response<const MAX_RESPONSE_SIZE: usize> {
     pub code: i32,
-    pub data: Vec<u8, MAX_RESPONSE_SIZE>,
+    pub data: String<MAX_RESPONSE_SIZE>,
 }
 
 impl<const MAX_RESPONSE_SIZE: usize> Response<MAX_RESPONSE_SIZE> {
@@ -30,25 +30,20 @@ impl<const MAX_RESPONSE_SIZE: usize> Response<MAX_RESPONSE_SIZE> {
     /// # Note
     /// If the provided `response` cannot fit into the message, an error will be returned instead.
     pub fn data(response: impl Serialize) -> Self {
-        let mut data = Vec::new();
-        data.resize(data.capacity(), 0).unwrap();
-        let len = match serde_json_core::to_slice(&response, &mut data[..]) {
-            Ok(len) => len,
+        let data = match serde_json_core::to_string(&response) {
+            Ok(data) => data,
             Err(_) => return Self::custom(-2, "Response too large"),
         };
-
-        data.resize(len, 0).unwrap();
 
         Self { code: 0, data }
     }
 
     /// A custom response type using the provided code and message.
     pub fn custom(code: i32, message: &str) -> Self {
-        let mut data = Vec::new();
+        let mut data = String::new();
 
-        if data.write_str(message).is_err() {
-            // Note(unwrap): This string should always fit in the data vector.
-            data.write_str("Truncated").unwrap();
+        if data.push_str(message).is_err() {
+            data = String::from("Truncated");
         }
 
         Self { code, data }
