@@ -448,7 +448,7 @@ where
             mqtt.client
                 .publish(
                     &topic,
-                    "TODO".as_bytes(),
+                    "".as_bytes(),
                     // TODO: When Minimq supports more QoS levels, this should be increased to
                     // ensure that the client has received it at least once.
                     QoS::AtMostOnce,
