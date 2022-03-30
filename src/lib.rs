@@ -361,13 +361,8 @@ where
     }
 }
 
-struct MinireqContext<
-    Context,
-    Stack,
-    Clock,
-    const MESSAGE_SIZE: usize,
-    const NUM_REQUESTS: usize,
-> where
+struct MinireqContext<Context, Stack, Clock, const MESSAGE_SIZE: usize, const NUM_REQUESTS: usize>
+where
     Stack: TcpClientStack,
     Clock: embedded_time::Clock,
 {
@@ -448,7 +443,7 @@ where
             mqtt.client
                 .publish(
                     &topic,
-                    "".as_bytes(),
+                    "{}".as_bytes(),
                     // TODO: When Minimq supports more QoS levels, this should be increased to
                     // ensure that the client has received it at least once.
                     QoS::AtMostOnce,
