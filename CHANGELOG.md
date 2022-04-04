@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+* All registered command topics are now published upon connection with the broker or when the
+command is registered.
+
 ### Fixed
 * [#3](https://github.com/quartiq/minireq/issues/3) Fixed an issue where large responses would trigger an internal panic
 * [#7](https://github.com/quartiq/minireq/issues/7) Fixed serialization of responses so they are readable
