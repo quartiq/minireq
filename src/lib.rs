@@ -443,6 +443,7 @@ where
             mqtt.client
                 .publish(
                     &topic,
+                    // Empty payload would correspond to deleting a retained message.
                     "{}".as_bytes(),
                     // TODO: When Minimq supports more QoS levels, this should be increased to
                     // ensure that the client has received it at least once.
