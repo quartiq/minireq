@@ -74,18 +74,15 @@ use core::fmt::Write;
 
 use minimq::{
     embedded_nal::{IpAddr, TcpClientStack},
-    embedded_time, Property, QoS, Retain,
+    embedded_time, QoS,
 };
 
-use serde_json_core::heapless::{String, Vec};
+use serde_json_core::heapless::String;
 
-use log::{debug, info, warn};
+use log::{info, warn};
 
 pub mod response;
 pub use response::Response;
-
-// Correlation data for command republishing.
-const REPUBLISH_CORRELATION_DATA: Property = Property::CorrelationData("REPUBLISH".as_bytes());
 
 // The maximum topic length of any settings path.
 const MAX_TOPIC_LENGTH: usize = 128;
@@ -171,7 +168,7 @@ where
 
         // Note(unwrap): The client was just created, so it's valid to set a keepalive interval
         // now, since we're not yet connected to the broker.
-        mqtt.client
+        mqtt.client()
             .set_keepalive_interval(KEEPALIVE_INTERVAL_SECONDS)
             .unwrap();
 
@@ -247,15 +244,6 @@ where
         } = self.machine.context_mut();
 
         match mqtt.poll(|client, topic, message, properties| {
-            // If the incoming message has republish correlation data, ignore it.
-            if properties
-                .iter()
-                .any(|&prop| prop == REPUBLISH_CORRELATION_DATA)
-            {
-                debug!("Ignoring republish data");
-                return;
-            }
-
             let path = match topic.strip_prefix(prefix.as_str()) {
                 // For paths, we do not want to include the leading slash.
                 Some(path) => {
@@ -277,28 +265,6 @@ where
                 None => Response::custom(-1, "Unregistered request"),
             };
 
-            // Extract the response topic
-            let response_topic = match properties
-                .iter()
-                .find(|prop| matches!(prop, Property::ResponseTopic(_)))
-            {
-                Some(Property::ResponseTopic(topic)) => topic,
-                _ => {
-                    info!("No response topic was provided with request: `{}`", path);
-                    return;
-                }
-            };
-
-            // Extract correlation data
-            let mut response_props: Vec<minimq::Property, 1> = Vec::new();
-            if let Some(cd) = properties
-                .iter()
-                .find(|prop| matches!(prop, minimq::Property::CorrelationData(_)))
-            {
-                // Note(unwrap): We guarantee there is space for this item.
-                response_props.push(*cd).unwrap();
-            }
-
             let mut serialized_response = [0u8; MESSAGE_SIZE];
             let len = match serde_json_core::to_slice(&response, &mut serialized_response) {
                 Ok(len) => len,
@@ -311,17 +277,19 @@ where
                 }
             };
 
-            client
-                .publish(
-                    response_topic,
-                    &serialized_response[..len],
-                    // TODO: When Minimq supports more QoS levels, this should be increased to
-                    // ensure that the client has received it at least once.
-                    QoS::AtMostOnce,
-                    Retain::NotRetained,
-                    &response_props,
-                )
-                .ok();
+            let response = match minimq::Publication::new(&serialized_response[..len])
+                .reply(properties)
+                .qos(QoS::AtLeastOnce)
+                .finish()
+            {
+                Ok(response) => response,
+                _ => {
+                    warn!("No response topic was provided with request: `{}`", path);
+                    return;
+                }
+            };
+
+            client.publish(response).ok();
         }) {
             Ok(_) => Ok(()),
             Err(minimq::Error::SessionReset) => {
@@ -350,7 +318,7 @@ where
             &[u8],
         ) -> Result<Response<MESSAGE_SIZE>, Error<Stack::Error>>,
     {
-        if !self.machine.context_mut().mqtt.client.is_connected() {
+        if !self.machine.context_mut().mqtt.client().is_connected() {
             // Note(unwrap): It's always safe to unwrap the reset event. All states must handle it.
             self.machine.process_event(sm::Events::Reset).unwrap();
         }
@@ -402,7 +370,12 @@ where
         let mut prefix: String<{ MAX_TOPIC_LENGTH + 2 }> = String::from(self.prefix.as_str());
         prefix.push_str("/#").unwrap();
 
-        self.mqtt.client.subscribe(&prefix, &[]).map_err(|_| ())
+        let topic_prefix = minimq::types::TopicFilter::new(&prefix)
+            .options(minimq::types::SubscriptionOptions::default().ignore_local_messages());
+        self.mqtt
+            .client()
+            .subscribe(&[topic_prefix], &[])
+            .map_err(|_| ())
     }
 
     /// Guard to check for an MQTT broker connection.
@@ -410,7 +383,7 @@ where
     /// # Returns
     /// Ok if the MQTT broker is connected, false otherwise.
     fn is_connected(&mut self) -> Result<(), ()> {
-        if self.mqtt.client.is_connected() {
+        if self.mqtt.client().is_connected() {
             Ok(())
         } else {
             Err(())
@@ -440,16 +413,14 @@ where
             topic.push_str("/").unwrap();
             topic.push_str(command_prefix).unwrap();
 
-            mqtt.client
+            mqtt.client()
                 .publish(
-                    &topic,
-                    // Empty payload would correspond to deleting a retained message.
-                    "{}".as_bytes(),
-                    // TODO: When Minimq supports more QoS levels, this should be increased to
-                    // ensure that the client has received it at least once.
-                    QoS::AtMostOnce,
-                    Retain::Retained,
-                    &[REPUBLISH_CORRELATION_DATA],
+                    minimq::Publication::new(b"{}")
+                        .qos(QoS::AtLeastOnce)
+                        .retain()
+                        .topic(&topic)
+                        .finish()
+                        .unwrap(),
                 )
                 .map_err(|_| ())?;
 
