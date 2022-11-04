@@ -13,29 +13,33 @@ async fn client_task() {
     .unwrap();
 
     // Wait for the broker connection
-    while !mqtt.client.is_connected() {
+    while !mqtt.client().is_connected() {
         mqtt.poll(|_client, _topic, _message, _properties| {})
             .unwrap();
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
 
     let response_topic = "minireq/integration/device/response";
-    mqtt.client.subscribe(&response_topic, &[]).unwrap();
+    mqtt.client()
+        .subscribe(&[minimq::types::TopicFilter::new(response_topic)], &[])
+        .unwrap();
 
     // Wait the other device to connect.
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
     // Configure the error variable to trigger an internal validation failure.
-    let properties = [minimq::Property::ResponseTopic(&response_topic)];
+    let properties = [minimq::Property::ResponseTopic(minimq::types::Utf8String(
+        response_topic,
+    ))];
 
     log::info!("Publishing error setting");
-    mqtt.client
+    mqtt.client()
         .publish(
-            "minireq/integration/device/command/test",
-            b"true",
-            minimq::QoS::AtMostOnce,
-            minimq::Retain::NotRetained,
-            &properties,
+            minimq::Publication::new(b"true")
+                .topic("minireq/integration/device/command/test")
+                .properties(&properties)
+                .finish()
+                .unwrap(),
         )
         .unwrap();
 
