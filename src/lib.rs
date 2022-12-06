@@ -77,8 +77,8 @@ use minimq::{
     embedded_time, QoS,
 };
 
-use serde_json_core::heapless::String;
 use log::{info, warn};
+use serde_json_core::heapless::String;
 
 pub mod response;
 pub use response::Response;
