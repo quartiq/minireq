@@ -37,7 +37,7 @@
 //!     data: &[u8]
 //! ) -> Result<minireq::Response<128>, Error> {
 //!     // Deserialize the request.
-//!     let mut request: Request = serde_json_core::from_slice(data)?.0;
+//!     let mut request: Request = minireq::serde_json_core::from_slice(data)?.0;
 //!
 //!     request.data = request.data.wrapping_add(1);
 //!
@@ -78,11 +78,11 @@ use minimq::{
 };
 
 use serde_json_core::heapless::String;
-
 use log::{info, warn};
 
 pub mod response;
 pub use response::Response;
+pub use serde_json_core;
 
 // The maximum topic length of any settings path.
 const MAX_TOPIC_LENGTH: usize = 128;
