@@ -18,8 +18,11 @@ serde = { version = "1", features = ["derive"], default-features = false }
 smlang = "0.6"
 
 [dev-dependencies]
-std-embedded-nal = "0.1"
 std-embedded-time = "0.1"
 tokio = { version = "1.9", features = ["rt-multi-thread", "time", "macros"] }
 env_logger = "0.9"
-embedded-nal = "0.6"
+embedded-nal = "0.7"
+
+[dev-dependencies.std-embedded-nal]
+git = "https://gitlab.com/ryan-summers/std-embedded-nal.git"
+branch = "feature/0.7"
