@@ -10,12 +10,13 @@ categories = ["no-std", "config", "embedded", "parsing"]
 repository = "https://github.com/quartiq/minireq"
 
 [dependencies]
-minimq = "0.7"
+minimq = {git = "https://github.com/quartiq/minimq"}
 heapless = {version = "0.7", features = ["serde"] }
 serde-json-core = "0.5"
 log = "0.4"
 serde = { version = "1", features = ["derive"], default-features = false }
 smlang = "0.6"
+embedded-io = "0.5"
 
 [dev-dependencies]
 std-embedded-time = "0.1"
