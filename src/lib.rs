@@ -334,8 +334,9 @@ where
     /// Poll the request/response interface.
     ///
     /// # Args
-    /// * `f` - A function that will be called with the provided handler, command, and data. This
-    /// function is responsible for calling the handler with the necessary context.
+    /// * `f` - A function that will be called with the provided handler, command, data, and
+    /// response buffer. This function is responsible for calling the handler with the necessary
+    /// context.
     ///
     /// # Note
     /// Any incoming requests will be automatically handled using provided handlers.
