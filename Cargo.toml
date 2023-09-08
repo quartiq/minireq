@@ -23,6 +23,7 @@ tokio = { version = "1.9", features = ["rt-multi-thread", "time", "macros"] }
 env_logger = "0.9"
 embedded-nal = "0.7"
 minimq = {git = "https://github.com/quartiq/minimq", branch = "rs/fnmut", features=["logging"]}
+serde-json-core = "0.5"
 
 [dev-dependencies.std-embedded-nal]
 git = "https://gitlab.com/ryan-summers/std-embedded-nal.git"

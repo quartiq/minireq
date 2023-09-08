@@ -17,12 +17,10 @@
 //!
 //! ## Example
 //! ```no_run
+//! use embedded_io::Write;
 //! # use embedded_nal::TcpClientStack;
-//! type Error = minireq::Error<
-//!      // Your network stack error type
-//! #    <std_embedded_nal::Stack as TcpClientStack>::Error
-//! >;
 //!
+//! #[derive(Copy, Clone)]
 //! struct Context {}
 //!
 //! #[derive(serde::Serialize, serde::Deserialize)]
@@ -34,24 +32,35 @@
 //! pub fn handler(
 //!     context: &mut Context,
 //!     cmd: &str,
-//!     data: &[u8]
-//! ) -> Result<minireq::Response<128>, Error> {
+//!     data: &[u8],
+//!     mut output_buffer: &mut [u8]
+//! ) -> Result<usize, minireq::NoErrors> {
 //!     // Deserialize the request.
-//!     let mut request: Request = minireq::serde_json_core::from_slice(data)?.0;
+//!     let mut request: Request = serde_json_core::from_slice(data).unwrap().0;
 //!
-//!     request.data = request.data.wrapping_add(1);
+//!     let response = request.data.wrapping_add(1);
+//!     let start = output_buffer.len();
 //!
-//!     Ok(minireq::Response::data(request))
+//!     write!(output_buffer, "{}", response).unwrap();
+//!     Ok(start - output_buffer.len())
 //! }
 //!
-//! // Construct the client
-//! let mut client: minireq::Minireq<Context, _, _, 128, 1> = minireq::Minireq::new(
-//!       // Constructor arguments
-//! #     std_embedded_nal::Stack::default(),
-//! #     "test",
-//! #     "minireq",
-//! #     "127.0.0.1".parse().unwrap(),
+//! # let mut buffer = [0u8; 1024];
+//! # let stack = std_embedded_nal::Stack;
+//! # let localhost = embedded_nal::IpAddr::V4(embedded_nal::Ipv4Addr::new(127, 0, 0, 1));
+//! let mqtt: minimq::Minimq<'_, _, _, minimq::broker::IpBroker> = minireq::minimq::Minimq::new(
+//! // Constructor
+//! #     stack,
 //! #     std_embedded_time::StandardClock::default(),
+//! #     minimq::ConfigBuilder::new(localhost.into(), &mut buffer).keepalive_interval(60),
+//! );
+//!
+//! // Construct the client
+//! let mut handlers = [None; 10];
+//! let mut client: minireq::Minireq<Context, _, _, _> = minireq::Minireq::new(
+//!     "prefix/device",
+//!     mqtt,
+//!     &mut handlers[..],
 //! )
 //! .unwrap();
 //!
@@ -63,9 +72,9 @@
 //!
 //! loop {
 //!     // In your main execution loop, continually poll the client to process incoming requests.
-//!     client.poll(|handler, command, data| {
+//!     client.poll(|handler, command, data, buffer| {
 //!         let mut context = Context {};
-//!         handler(&mut context, command, data)
+//!         handler(&mut context, command, data, buffer)
 //!     }).unwrap();
 //! }
 //! ```
@@ -264,8 +273,9 @@ where
             let path = path.strip_prefix('/').unwrap_or(path);
             // Perform the action
             let Some(meta) = handlers.iter().find_map(|x| {
-                x.as_ref()
-                    .and_then(|(handle, handler)| if handle == &path { Some(handler) } else { None })
+                x.as_ref().and_then(
+                    |(handle, handler)| if handle == &path { Some(handler) } else { None },
+                )
             }) else {
                 if let Ok(response) = minimq::Publication::new("No registered handler")
                     .properties(&[ResponseCode::Error.to_user_property()])
