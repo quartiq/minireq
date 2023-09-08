@@ -89,7 +89,7 @@ async fn main() {
     // Construct a settings configuration interface.
     let mut handlers = [None; 10];
     let mut interface: minireq::Minireq<bool, _, _, minimq::broker::IpBroker> =
-        minireq::Minireq::new("tester-device", mqtt, &mut handlers[..]).unwrap();
+        minireq::Minireq::new("minireq/integration/device", mqtt, &mut handlers[..]).unwrap();
 
     interface
         .register("test", |exit, _req, _data, _out_buffer| {

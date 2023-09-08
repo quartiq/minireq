@@ -261,14 +261,13 @@ where
             };
 
             // For paths, we do not want to include the leading slash.
-            let path = path.strip_prefix("/").unwrap_or(path);
+            let path = path.strip_prefix('/').unwrap_or(path);
             // Perform the action
             let Some(meta) = handlers.iter().find_map(|x| {
                 x.as_ref()
-                    .map(|(handle, handler)| if handle == &path { Some(handler) } else { None })
-                    .flatten()
+                    .and_then(|(handle, handler)| if handle == &path { Some(handler) } else { None })
             }) else {
-                if let Ok(response) = minimq::Publication::new("No registered handler".as_bytes())
+                if let Ok(response) = minimq::Publication::new("No registered handler")
                     .properties(&[ResponseCode::Error.to_user_property()])
                     .reply(properties)
                     .qos(QoS::AtLeastOnce)
@@ -330,7 +329,7 @@ where
     ///
     /// # Note
     /// Any incoming requests will be automatically handled using provided handlers.
-    pub fn poll<F>(&mut self, mut f: F) -> Result<(), Error<Stack::Error>>
+    pub fn poll<F>(&mut self, f: F) -> Result<(), Error<Stack::Error>>
     where
         F: FnMut(Handler<Context, E>, &str, &[u8], &mut [u8]) -> Result<usize, E>,
     {
