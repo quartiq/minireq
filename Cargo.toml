@@ -12,7 +12,6 @@ repository = "https://github.com/quartiq/minireq"
 [dependencies]
 minimq = {git = "https://github.com/quartiq/minimq"}
 heapless = {version = "0.7", features = ["serde"] }
-serde-json-core = "0.5"
 log = "0.4"
 serde = { version = "1", features = ["derive"], default-features = false }
 smlang = "0.6"
