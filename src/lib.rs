@@ -17,12 +17,10 @@
 //!
 //! ## Example
 //! ```no_run
+//! use embedded_io::Write;
 //! # use embedded_nal::TcpClientStack;
-//! type Error = minireq::Error<
-//!      // Your network stack error type
-//! #    <std_embedded_nal::Stack as TcpClientStack>::Error
-//! >;
 //!
+//! #[derive(Copy, Clone)]
 //! struct Context {}
 //!
 //! #[derive(serde::Serialize, serde::Deserialize)]
@@ -34,24 +32,35 @@
 //! pub fn handler(
 //!     context: &mut Context,
 //!     cmd: &str,
-//!     data: &[u8]
-//! ) -> Result<minireq::Response<128>, Error> {
+//!     data: &[u8],
+//!     mut output_buffer: &mut [u8]
+//! ) -> Result<usize, minireq::NoErrors> {
 //!     // Deserialize the request.
-//!     let mut request: Request = minireq::serde_json_core::from_slice(data)?.0;
+//!     let mut request: Request = serde_json_core::from_slice(data).unwrap().0;
 //!
-//!     request.data = request.data.wrapping_add(1);
+//!     let response = request.data.wrapping_add(1);
+//!     let start = output_buffer.len();
 //!
-//!     Ok(minireq::Response::data(request))
+//!     write!(output_buffer, "{}", response).unwrap();
+//!     Ok(start - output_buffer.len())
 //! }
 //!
-//! // Construct the client
-//! let mut client: minireq::Minireq<Context, _, _, 128, 1> = minireq::Minireq::new(
-//!       // Constructor arguments
-//! #     std_embedded_nal::Stack::default(),
-//! #     "test",
-//! #     "minireq",
-//! #     "127.0.0.1".parse().unwrap(),
+//! # let mut buffer = [0u8; 1024];
+//! # let stack = std_embedded_nal::Stack;
+//! # let localhost = embedded_nal::IpAddr::V4(embedded_nal::Ipv4Addr::new(127, 0, 0, 1));
+//! let mqtt: minimq::Minimq<'_, _, _, minimq::broker::IpBroker> = minireq::minimq::Minimq::new(
+//! // Constructor
+//! #     stack,
 //! #     std_embedded_time::StandardClock::default(),
+//! #     minimq::ConfigBuilder::new(localhost.into(), &mut buffer).keepalive_interval(60),
+//! );
+//!
+//! // Construct the client
+//! let mut handlers = [None; 10];
+//! let mut client: minireq::Minireq<Context, _, _, _> = minireq::Minireq::new(
+//!     "prefix/device",
+//!     mqtt,
+//!     &mut handlers[..],
 //! )
 //! .unwrap();
 //!
@@ -63,45 +72,59 @@
 //!
 //! loop {
 //!     // In your main execution loop, continually poll the client to process incoming requests.
-//!     client.poll(|handler, command, data| {
+//!     client.poll(|handler, command, data, buffer| {
 //!         let mut context = Context {};
-//!         handler(&mut context, command, data)
+//!         handler(&mut context, command, data, buffer)
 //!     }).unwrap();
 //! }
 //! ```
 //!
-use core::fmt::Write;
+use core::fmt::Write as CoreWrite;
+use embedded_io::Write;
 
-use minimq::{
-    embedded_nal::{IpAddr, TcpClientStack},
-    embedded_time, QoS,
-};
+pub use minimq;
 
+use minimq::{embedded_nal::TcpClientStack, embedded_time, QoS};
+
+use heapless::String;
 use log::{info, warn};
-use serde_json_core::heapless::String;
 
-pub mod response;
-pub use response::Response;
-pub use serde_json_core;
+#[derive(Copy, Clone, Debug)]
+pub struct NoErrors;
+
+impl core::fmt::Display for NoErrors {
+    fn fmt(&self, _f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        unimplemented!()
+    }
+}
+
+pub enum ResponseCode {
+    Ok,
+    Error,
+}
+
+impl ResponseCode {
+    pub fn to_user_property(self) -> minimq::Property<'static> {
+        let code = match self {
+            ResponseCode::Ok => "Ok",
+            ResponseCode::Error => "Error",
+        };
+
+        minimq::Property::UserProperty(
+            minimq::types::Utf8String("code"),
+            minimq::types::Utf8String(code),
+        )
+    }
+}
 
 // The maximum topic length of any settings path.
 const MAX_TOPIC_LENGTH: usize = 128;
-
-// The keepalive interval to use for MQTT in seconds.
-const KEEPALIVE_INTERVAL_SECONDS: u16 = 60;
 
 #[derive(Debug, PartialEq)]
 pub enum Error<E> {
     RegisterFailed,
     PrefixTooLong,
-    Deserialization(serde_json_core::de::Error),
     Mqtt(minimq::Error<E>),
-}
-
-impl<E> From<serde_json_core::de::Error> for Error<E> {
-    fn from(e: serde_json_core::de::Error) -> Self {
-        Error::Deserialization(e)
-    }
 }
 
 impl<E> From<minimq::Error<E>> for Error<E> {
@@ -126,73 +149,63 @@ mod sm {
     }
 }
 
-type Handler<Context, E, const RESPONSE_SIZE: usize> =
-    fn(&mut Context, &str, &[u8]) -> Result<Response<RESPONSE_SIZE>, Error<E>>;
+type Handler<Context, E> = fn(&mut Context, &str, &[u8], &mut [u8]) -> Result<usize, E>;
 
-struct HandlerMeta<Context, E, const RESPONSE_SIZE: usize> {
-    handler: Handler<Context, E, RESPONSE_SIZE>,
+#[derive(Copy, Clone, Debug)]
+pub struct HandlerMeta<Context, E> {
+    handler: Handler<Context, E>,
     republished: bool,
 }
 
+pub type HandlerSlot<'a, Context, E> = Option<(&'a str, HandlerMeta<Context, E>)>;
+
 /// MQTT request/response interface.
-pub struct Minireq<Context, Stack, Clock, const MESSAGE_SIZE: usize, const NUM_REQUESTS: usize>
+pub struct Minireq<'a, Context, Stack, Clock, Broker, E = NoErrors>
 where
     Stack: TcpClientStack,
     Clock: embedded_time::Clock,
+    Broker: minimq::broker::Broker,
+    E: core::fmt::Display,
 {
-    machine: sm::StateMachine<MinireqContext<Context, Stack, Clock, MESSAGE_SIZE, NUM_REQUESTS>>,
+    machine: sm::StateMachine<MinireqContext<'a, Context, Stack, Clock, Broker, E>>,
 }
 
-impl<Context, Stack, Clock, const MESSAGE_SIZE: usize, const NUM_REQUESTS: usize>
-    Minireq<Context, Stack, Clock, MESSAGE_SIZE, NUM_REQUESTS>
+impl<'a, Context, Stack, Clock, Broker, E> Minireq<'a, Context, Stack, Clock, Broker, E>
 where
     Stack: TcpClientStack,
     Clock: embedded_time::Clock,
+    Broker: minimq::broker::Broker,
+    E: core::fmt::Display,
 {
     /// Construct a new MQTT request handler.
     ///
     /// # Args
-    /// * `stack` - The network stack to use for communication.
-    /// * `client_id` - The ID of the MQTT client. May be an empty string for auto-assigning.
     /// * `device_prefix` - The MQTT device prefix to use for this device.
-    /// * `broker` - The IP address of the MQTT broker to use.
-    /// * `clock` - The clock for managing the MQTT connection.
     pub fn new(
-        stack: Stack,
-        client_id: &str,
         device_prefix: &str,
-        broker: IpAddr,
-        clock: Clock,
+        mqtt: minimq::Minimq<'a, Stack, Clock, Broker>,
+        handlers: &'a mut [HandlerSlot<'a, Context, E>],
     ) -> Result<Self, Error<Stack::Error>> {
-        let mut mqtt = minimq::Minimq::new(broker, client_id, stack, clock)?;
-
-        // Note(unwrap): The client was just created, so it's valid to set a keepalive interval
-        // now, since we're not yet connected to the broker.
-        mqtt.client()
-            .set_keepalive_interval(KEEPALIVE_INTERVAL_SECONDS)
-            .unwrap();
-
         // Note(unwrap): The user must provide a prefix of the correct size.
         let mut prefix: String<MAX_TOPIC_LENGTH> = String::new();
         write!(&mut prefix, "{}/command", device_prefix).map_err(|_| Error::PrefixTooLong)?;
 
-        let context = MinireqContext {
-            handlers: heapless::LinearMap::default(),
-            mqtt,
-            prefix,
-        };
-
         Ok(Self {
-            machine: sm::StateMachine::new(context),
+            machine: sm::StateMachine::new(MinireqContext {
+                handlers,
+                mqtt,
+                prefix,
+            }),
         })
     }
 }
 
-impl<Context, Stack, Clock, const MESSAGE_SIZE: usize, const NUM_REQUESTS: usize>
-    Minireq<Context, Stack, Clock, MESSAGE_SIZE, NUM_REQUESTS>
+impl<'a, Context, Stack, Clock, Broker, E> Minireq<'a, Context, Stack, Clock, Broker, E>
 where
     Stack: TcpClientStack,
     Clock: embedded_time::Clock,
+    Broker: minimq::broker::Broker,
+    E: core::fmt::Display,
 {
     /// Associate a handler to be called when receiving the specified request.
     ///
@@ -201,22 +214,33 @@ where
     /// * `handler` - The handler function to be called when the request occurs.
     pub fn register(
         &mut self,
-        topic: &str,
-        handler: Handler<Context, Stack::Error, MESSAGE_SIZE>,
-    ) -> Result<bool, Error<Stack::Error>> {
-        let added = self
-            .machine
-            .context_mut()
-            .handlers
-            .insert(
-                String::from(topic),
-                HandlerMeta {
-                    handler,
-                    republished: false,
-                },
-            )
-            .map(|prev| prev.is_none())
-            .map_err(|_| Error::RegisterFailed)?;
+        topic: &'a str,
+        handler: Handler<Context, E>,
+    ) -> Result<(), Error<Stack::Error>> {
+        let mut added = false;
+        for slot in self.machine.context_mut().handlers.iter_mut() {
+            if let Some((handle, _handler)) = &slot {
+                if handle == &topic {
+                    return Err(Error::RegisterFailed);
+                }
+            }
+
+            if slot.is_none() {
+                slot.replace((
+                    topic,
+                    HandlerMeta {
+                        handler,
+                        republished: false,
+                    },
+                ));
+                added = true;
+                break;
+            }
+        }
+
+        if !added {
+            return Err(Error::RegisterFailed);
+        }
 
         // Force a republish of the newly-registered command after adding it. We ignore failures of
         // event processing here since that would imply we are adding the handler before we've even
@@ -225,16 +249,12 @@ where
             .process_event(sm::Events::PendingRepublish)
             .ok();
 
-        Ok(added)
+        Ok(())
     }
 
     fn _handle_mqtt<F>(&mut self, mut f: F) -> Result<(), Error<Stack::Error>>
     where
-        F: FnMut(
-            Handler<Context, Stack::Error, MESSAGE_SIZE>,
-            &str,
-            &[u8],
-        ) -> Result<Response<MESSAGE_SIZE>, Error<Stack::Error>>,
+        F: FnMut(Handler<Context, E>, &str, &[u8], &mut [u8]) -> Result<usize, E>,
     {
         let MinireqContext {
             handlers,
@@ -244,52 +264,61 @@ where
         } = self.machine.context_mut();
 
         match mqtt.poll(|client, topic, message, properties| {
-            let path = match topic.strip_prefix(prefix.as_str()) {
-                // For paths, we do not want to include the leading slash.
-                Some(path) => {
-                    if !path.is_empty() {
-                        &path[1..]
-                    } else {
-                        path
-                    }
-                }
-                None => {
-                    info!("Unexpected MQTT topic: {}", topic);
-                    return;
-                }
+            let Some(path) = topic.strip_prefix(prefix.as_str()) else {
+                info!("Unexpected MQTT topic: {}", topic);
+                return;
             };
 
+            // For paths, we do not want to include the leading slash.
+            let path = path.strip_prefix('/').unwrap_or(path);
             // Perform the action
-            let response = match handlers.get(&String::from(path)) {
-                Some(meta) => f(meta.handler, path, message).unwrap_or_else(Response::error),
-                None => Response::custom(-1, "Unregistered request"),
-            };
-
-            let mut serialized_response = [0u8; MESSAGE_SIZE];
-            let len = match serde_json_core::to_slice(&response, &mut serialized_response) {
-                Ok(len) => len,
-                Err(err) => {
-                    warn!(
-                        "Response could not be serialized into MQTT message: {:?}",
-                        err
-                    );
-                    return;
+            let Some(meta) = handlers.iter().find_map(|x| {
+                x.as_ref().and_then(
+                    |(handle, handler)| if handle == &path { Some(handler) } else { None },
+                )
+            }) else {
+                if let Ok(response) = minimq::Publication::new("No registered handler")
+                    .properties(&[ResponseCode::Error.to_user_property()])
+                    .reply(properties)
+                    .qos(QoS::AtLeastOnce)
+                    .finish()
+                {
+                    client.publish(response).ok();
                 }
+
+                return;
             };
 
-            let response = match minimq::Publication::new(&serialized_response[..len])
+            // Assume that the update will succeed. We will handle conditions when it doesn't later
+            // when attempting transmission.
+            let props = [ResponseCode::Ok.to_user_property()];
+
+            let Ok(response) =
+                minimq::DeferredPublication::new(|buf| f(meta.handler, path, message, buf))
+                    .reply(properties)
+                    .properties(&props)
+                    .qos(QoS::AtLeastOnce)
+                    .finish()
+            else {
+                warn!("No response topic was provided with request: `{}`", path);
+                return;
+            };
+
+            if let Err(minimq::PubError::Serialization(err)) = client.publish(response) {
+                if let Ok(message) = minimq::DeferredPublication::new(|mut buf| {
+                    let start = buf.len();
+                    write!(buf, "{}", err).and_then(|_| Ok(start - buf.len()))
+                })
+                .properties(&[ResponseCode::Error.to_user_property()])
                 .reply(properties)
                 .qos(QoS::AtLeastOnce)
                 .finish()
-            {
-                Ok(response) => response,
-                _ => {
-                    warn!("No response topic was provided with request: `{}`", path);
-                    return;
-                }
-            };
-
-            client.publish(response).ok();
+                {
+                    // Try to send the error as a best-effort. If we don't have enough
+                    // buffer space to encode the error, there's nothing more we can do.
+                    client.publish(message).ok();
+                };
+            }
         }) {
             Ok(_) => Ok(()),
             Err(minimq::Error::SessionReset) => {
@@ -305,18 +334,15 @@ where
     /// Poll the request/response interface.
     ///
     /// # Args
-    /// * `f` - A function that will be called with the provided handler, command, and data. This
-    /// function is responsible for calling the handler with the necessary context.
+    /// * `f` - A function that will be called with the provided handler, command, data, and
+    /// response buffer. This function is responsible for calling the handler with the necessary
+    /// context.
     ///
     /// # Note
     /// Any incoming requests will be automatically handled using provided handlers.
     pub fn poll<F>(&mut self, f: F) -> Result<(), Error<Stack::Error>>
     where
-        F: FnMut(
-            Handler<Context, Stack::Error, MESSAGE_SIZE>,
-            &str,
-            &[u8],
-        ) -> Result<Response<MESSAGE_SIZE>, Error<Stack::Error>>,
+        F: FnMut(Handler<Context, E>, &str, &[u8], &mut [u8]) -> Result<usize, E>,
     {
         if !self.machine.context_mut().mqtt.client().is_connected() {
             // Note(unwrap): It's always safe to unwrap the reset event. All states must handle it.
@@ -329,32 +355,35 @@ where
     }
 }
 
-struct MinireqContext<Context, Stack, Clock, const MESSAGE_SIZE: usize, const NUM_REQUESTS: usize>
+struct MinireqContext<'a, Context, Stack, Clock, Broker, E>
 where
     Stack: TcpClientStack,
     Clock: embedded_time::Clock,
+    Broker: minimq::broker::Broker,
+    E: core::fmt::Display,
 {
-    handlers: heapless::LinearMap<
-        String<MAX_TOPIC_LENGTH>,
-        HandlerMeta<Context, Stack::Error, MESSAGE_SIZE>,
-        NUM_REQUESTS,
-    >,
-    mqtt: minimq::Minimq<Stack, Clock, MESSAGE_SIZE, 1>,
+    handlers: &'a mut [HandlerSlot<'a, Context, E>],
+    mqtt: minimq::Minimq<'a, Stack, Clock, Broker>,
     prefix: String<MAX_TOPIC_LENGTH>,
 }
 
-impl<Context, Stack, Clock, const MESSAGE_SIZE: usize, const NUM_REQUESTS: usize>
-    sm::StateMachineContext for MinireqContext<Context, Stack, Clock, MESSAGE_SIZE, NUM_REQUESTS>
+impl<'a, Context, Stack, Clock, Broker, E> sm::StateMachineContext
+    for MinireqContext<'a, Context, Stack, Clock, Broker, E>
 where
     Stack: TcpClientStack,
     Clock: embedded_time::Clock,
+    Broker: minimq::broker::Broker,
+    E: core::fmt::Display,
 {
     /// Reset the republish state of all of the handlers.
     fn reset(&mut self) {
         for HandlerMeta {
             ref mut republished,
             ..
-        } in self.handlers.values_mut()
+        } in self
+            .handlers
+            .iter_mut()
+            .filter_map(|x| x.as_mut().map(|(_topic, meta)| meta))
         {
             *republished = false;
         }
@@ -403,10 +432,19 @@ where
             ..
         } = self;
 
-        for (command_prefix, HandlerMeta { republished, .. }) in handlers
-            .iter_mut()
-            .filter(|(_, HandlerMeta { republished, .. })| !republished)
-        {
+        for (
+            command_prefix,
+            HandlerMeta {
+                ref mut republished,
+                ..
+            },
+        ) in handlers.iter_mut().filter_map(|handler| {
+            if let Some(handler) = handler {
+                Some(handler)
+            } else {
+                None
+            }
+        }) {
             // Note(unwrap): The unwrap cannot fail because of restrictions on the max topic
             // length.
             let mut topic: String<{ 2 * MAX_TOPIC_LENGTH + 1 }> = String::from(prefix.as_str());

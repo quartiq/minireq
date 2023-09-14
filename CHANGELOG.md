@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+* Handlers now take a fourth argument, `output_buffer`, where they can serialize their response into
+directly
+* Minimq was bumped
+* Users now provide memory for storing handlers into.
+* Handler errors will now automatically be serialized into the response on failure, and are required
+to implement `core::fmt::Display`
+
 ## [0.2.0] - 2023-06-22
 
 * Minimq bumped to v0.7

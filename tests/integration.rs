@@ -1,16 +1,15 @@
-use minireq::Response;
-use std_embedded_nal::Stack;
 use std_embedded_time::StandardClock;
 
 async fn client_task() {
     // Construct a Minimq client to the broker for publishing requests.
-    let mut mqtt: minimq::Minimq<_, _, 256, 1> = minimq::Minimq::new(
-        "127.0.0.1".parse().unwrap(),
-        "tester-client",
-        Stack::default(),
+    let mut buffer = [0u8; 1024];
+    let stack = std_embedded_nal::Stack;
+    let localhost = embedded_nal::IpAddr::V4(embedded_nal::Ipv4Addr::new(127, 0, 0, 1));
+    let mut mqtt: minimq::Minimq<'_, _, _, minimq::broker::IpBroker> = minimq::Minimq::new(
+        stack,
         StandardClock::default(),
-    )
-    .unwrap();
+        minimq::ConfigBuilder::new(localhost.into(), &mut buffer).keepalive_interval(60),
+    );
 
     // Wait for the broker connection
     while !mqtt.client().is_connected() {
@@ -46,9 +45,19 @@ async fn client_task() {
     // Wait until we get a response to the request.
     let mut continue_testing = true;
     loop {
-        mqtt.poll(|_client, _topic, message, _properties| {
-            let data: Response<128> = serde_json_core::from_slice(message).unwrap().0;
-            assert!(data.code != 0);
+        mqtt.poll(|_client, _topic, _message, _properties| {
+            let (header, code) = properties
+                .into_iter()
+                .find_map(|prop| {
+                    if let minimq::Property::UserProperty(header, code) = prop {
+                        Some((header.0, code.0))
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            assert!(header == "code");
+            assert!(code == "Ok");
             continue_testing = false;
         })
         .unwrap();
@@ -68,20 +77,24 @@ async fn main() {
     // Spawn a task to send MQTT messages.
     tokio::task::spawn(async move { client_task().await });
 
-    // Construct a settings configuration interface.
-    let mut interface: minireq::Minireq<bool, _, _, 256, 1> = minireq::Minireq::new(
-        Stack::default(),
-        "tester-device",
-        "minireq/integration/device",
-        "127.0.0.1".parse().unwrap(),
+    let mut buffer = [0u8; 1024];
+    let stack = std_embedded_nal::Stack;
+    let localhost = embedded_nal::IpAddr::V4(embedded_nal::Ipv4Addr::new(127, 0, 0, 1));
+    let mqtt: minimq::Minimq<'_, _, _, minimq::broker::IpBroker> = minimq::Minimq::new(
+        stack,
         StandardClock::default(),
-    )
-    .unwrap();
+        minimq::ConfigBuilder::new(localhost.into(), &mut buffer).keepalive_interval(60),
+    );
+
+    // Construct a settings configuration interface.
+    let mut handlers = [None; 10];
+    let mut interface: minireq::Minireq<bool, _, _, minimq::broker::IpBroker> =
+        minireq::Minireq::new("minireq/integration/device", mqtt, &mut handlers[..]).unwrap();
 
     interface
-        .register("test", |exit, _req, _data| {
+        .register("test", |exit, _req, _data, _out_buffer| {
             *exit = true;
-            Ok(Response::ok())
+            Ok(0)
         })
         .unwrap();
 
@@ -89,7 +102,7 @@ async fn main() {
     let mut should_exit = false;
     while !should_exit {
         interface
-            .poll(|handler, topic, data| handler(&mut should_exit, topic, data))
+            .poll(|handler, topic, data, buffer| handler(&mut should_exit, topic, data, buffer))
             .unwrap();
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
