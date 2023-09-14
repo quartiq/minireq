@@ -432,19 +432,19 @@ where
             ..
         } = self;
 
-        for (
-            command_prefix,
-            HandlerMeta {
-                ref mut republished,
-                ..
-            },
-        ) in handlers.iter_mut().filter_map(|handler| {
-            if let Some(handler) = handler {
-                Some(handler)
-            } else {
-                None
-            }
-        }) {
+        for (command_prefix, HandlerMeta { republished, .. }) in
+            handlers.iter_mut().filter_map(|handler| {
+                let Some((prefix, meta)) = handler else {
+                    return None;
+                };
+
+                if !meta.republished {
+                    Some((prefix, meta))
+                } else {
+                    None
+                }
+            })
+        {
             // Note(unwrap): The unwrap cannot fail because of restrictions on the max topic
             // length.
             let mut topic: String<{ 2 * MAX_TOPIC_LENGTH + 1 }> = String::from(prefix.as_str());
