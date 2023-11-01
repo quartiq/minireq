@@ -1,6 +1,6 @@
 [package]
 name = "minireq"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Ryan Summers <ryan.summers@vertigo-designs.com>"]
 license = "MIT"
@@ -10,7 +10,7 @@ categories = ["no-std", "config", "embedded", "parsing"]
 repository = "https://github.com/quartiq/minireq"
 
 [dependencies]
-minimq = {git = "https://github.com/quartiq/minimq"}
+minimq = { version = "0.8.0" }
 heapless = {version = "0.7", features = ["serde"] }
 log = "0.4"
 serde = { version = "1", features = ["derive"], default-features = false }
