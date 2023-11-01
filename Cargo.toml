@@ -1,6 +1,6 @@
 [package]
 name = "minireq"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Ryan Summers <ryan.summers@vertigo-designs.com>"]
 license = "MIT"
@@ -10,20 +10,17 @@ categories = ["no-std", "config", "embedded", "parsing"]
 repository = "https://github.com/quartiq/minireq"
 
 [dependencies]
-minimq = {git = "https://github.com/quartiq/minimq"}
+minimq = { version = "0.8.0" }
 heapless = {version = "0.7", features = ["serde"] }
 log = "0.4"
 serde = { version = "1", features = ["derive"], default-features = false }
 smlang = "0.6"
-embedded-io = "0.5"
+embedded-io = "0.6"
 
 [dev-dependencies]
 std-embedded-time = "0.1"
 tokio = { version = "1.9", features = ["rt-multi-thread", "time", "macros"] }
-env_logger = "0.9"
+env_logger = "0.10"
 embedded-nal = "0.7"
 serde-json-core = "0.5"
-
-[dev-dependencies.std-embedded-nal]
-git = "https://gitlab.com/ryan-summers/std-embedded-nal.git"
-branch = "feature/0.7"
+std-embedded-nal = "0.2"
