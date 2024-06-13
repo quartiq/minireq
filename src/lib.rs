@@ -80,6 +80,7 @@
 //! ```
 //!
 use core::fmt::Write as CoreWrite;
+use core::str::FromStr;
 use embedded_io::Write;
 
 pub use minimq;
@@ -263,7 +264,7 @@ where
             ..
         } = self.machine.context_mut();
 
-        match mqtt.poll(|client, topic, message, properties| {
+        let result = mqtt.poll(|client, topic, message, properties| {
             let Some(path) = topic.strip_prefix(prefix.as_str()) else {
                 info!("Unexpected MQTT topic: {}", topic);
                 return;
@@ -319,7 +320,9 @@ where
                     client.publish(message).ok();
                 };
             }
-        }) {
+        });
+
+        match result {
             Ok(_) => Ok(()),
             Err(minimq::Error::SessionReset) => {
                 // Note(unwrap): It's always safe to unwrap the reset event. All states must handle
@@ -396,7 +399,8 @@ where
     fn subscribe(&mut self) -> Result<(), ()> {
         // Note(unwrap): We ensure that this storage is always sufficiently large to store
         // the wildcard post-fix for MQTT.
-        let mut prefix: String<{ MAX_TOPIC_LENGTH + 2 }> = String::from(self.prefix.as_str());
+        let mut prefix: String<{ MAX_TOPIC_LENGTH + 2 }> =
+            String::from_str(self.prefix.as_str()).unwrap();
         prefix.push_str("/#").unwrap();
 
         let topic_prefix = minimq::types::TopicFilter::new(&prefix)
@@ -447,7 +451,8 @@ where
         {
             // Note(unwrap): The unwrap cannot fail because of restrictions on the max topic
             // length.
-            let mut topic: String<{ 2 * MAX_TOPIC_LENGTH + 1 }> = String::from(prefix.as_str());
+            let mut topic: String<{ 2 * MAX_TOPIC_LENGTH + 1 }> =
+                String::from_str(prefix.as_str()).unwrap();
             topic.push_str("/").unwrap();
             topic.push_str(command_prefix).unwrap();
 
