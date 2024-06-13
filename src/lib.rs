@@ -263,7 +263,7 @@ where
             ..
         } = self.machine.context_mut();
 
-        match mqtt.poll(|client, topic, message, properties| {
+        let result = mqtt.poll(|client, topic, message, properties| {
             let Some(path) = topic.strip_prefix(prefix.as_str()) else {
                 info!("Unexpected MQTT topic: {}", topic);
                 return;
@@ -319,7 +319,9 @@ where
                     client.publish(message).ok();
                 };
             }
-        }) {
+        });
+
+        match result {
             Ok(_) => Ok(()),
             Err(minimq::Error::SessionReset) => {
                 // Note(unwrap): It's always safe to unwrap the reset event. All states must handle
