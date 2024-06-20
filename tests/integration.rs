@@ -90,7 +90,7 @@ async fn main() {
     let mut interface: minireq::Minireq<_, _, minimq::broker::IpBroker> =
         minireq::Minireq::new("minireq/integration/device", mqtt).unwrap();
 
-    interface.register("test").unwrap();
+    interface.subscribe("test").unwrap();
 
     // Update the client until the exit
     let mut should_exit = false;

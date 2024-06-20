@@ -2,9 +2,9 @@
 //! MQTT Request/response Handling
 //!
 //! # Overview
-//! This library is intended to be an easy way to handle inbound requests. You can register topics
-//! belonging to some prefix, and Minireq will ensure that these topics are published to the MQTT
-//! broker upon connection to handle discoverability.
+//! This library is intended to be an easy way to handle inbound requests. You can subscribe to
+//! topics belonging to some prefix, and Minireq will ensure that these topics are published to the
+//! MQTT broker upon connection to handle discoverability.
 //!
 //! Minireq also simplifies the process of generating responses to the inbound request
 //! automatically.
@@ -52,7 +52,7 @@
 //! .unwrap();
 //!
 //! // We want to listen for any messages coming in on the "prefix/device/command/test" topic
-//! client.register("test").unwrap();
+//! client.subscribe("test").unwrap();
 //!
 //! // ...
 //!
@@ -102,7 +102,7 @@ const MAX_TOPIC_LENGTH: usize = 128;
 
 #[derive(Debug, PartialEq)]
 pub enum Error<E> {
-    RegisterFailed,
+    SubscribeFailed,
     PrefixTooLong,
     Mqtt(minimq::Error<E>),
 }
@@ -183,14 +183,14 @@ where
     /// Associate a handler to be called when receiving the specified request.
     ///
     /// # Args
-    /// * `topic` - The command topic to register. This is appended to the string
+    /// * `topic` - The command topic to subscribe to. This is appended to the string
     /// `<prefix>/command/`.
-    pub fn register(&mut self, topic: &'a str) -> Result<(), Error<Stack::Error>> {
+    pub fn subscribe(&mut self, topic: &'a str) -> Result<(), Error<Stack::Error>> {
         let mut added = false;
         for slot in self.machine.context_mut().handlers.iter_mut() {
             if let Some((handle, _handler)) = &slot {
                 if handle == &topic {
-                    return Err(Error::RegisterFailed);
+                    return Err(Error::SubscribeFailed);
                 }
             }
 
@@ -202,10 +202,10 @@ where
         }
 
         if !added {
-            return Err(Error::RegisterFailed);
+            return Err(Error::SubscribeFailed);
         }
 
-        // Force a republish of the newly-registered command after adding it. We ignore failures of
+        // Force a republish of the newly-subscribed command after adding it. We ignore failures of
         // event processing here since that would imply we are adding the handler before we've even
         // gotten to the republish state.
         self.machine
@@ -238,7 +238,7 @@ where
 
             let found_handler = handlers.iter().flatten().any(|handler| handler.0 == path);
             if !found_handler {
-                if let Ok(response) = minimq::Publication::new("No registered handler")
+                if let Ok(response) = minimq::Publication::new("Command is not subscribed")
                     .properties(&[ResponseCode::Error.to_user_property()])
                     .reply(properties)
                     .qos(QoS::AtLeastOnce)
