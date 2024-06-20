@@ -2,7 +2,12 @@
 //! MQTT Request/response Handling
 //!
 //! # Overview
-//! This library is intended to be an easy way to handle inbound requests.
+//! This library is intended to be an easy way to handle inbound requests. You can register topics
+//! belonging to some prefix, and Minireq will ensure that these topics are published to the MQTT
+//! broker upon connection to handle discoverability.
+//!
+//! Minireq also simplifies the process of generating responses to the inbound request
+//! automatically.
 //!
 //! ## Example
 //! ```no_run
@@ -46,8 +51,7 @@
 //! )
 //! .unwrap();
 //!
-//! // Whenever the `test` command is received, call the associated handler.
-//! // You may add as many handlers as you would like.
+//! // We want to listen for any messages coming in on the "prefix/device/command/test" topic
 //! client.register("test").unwrap();
 //!
 //! // ...
@@ -179,7 +183,8 @@ where
     /// Associate a handler to be called when receiving the specified request.
     ///
     /// # Args
-    /// * `topic` - The command topic to register. This is appended ot the prefix.
+    /// * `topic` - The command topic to register. This is appended to the string
+    /// `<prefix>/command/`.
     pub fn register(&mut self, topic: &'a str) -> Result<(), Error<Stack::Error>> {
         let mut added = false;
         for slot in self.machine.context_mut().handlers.iter_mut() {
@@ -291,12 +296,8 @@ where
     /// Poll the request/response interface.
     ///
     /// # Args
-    /// * `f` - A function that will be called with the provided handler, command, data, and
-    /// response buffer. This function is responsible for calling the handler with the necessary
-    /// context.
-    ///
-    /// # Note
-    /// Any incoming requests will be automatically handled using provided handlers.
+    /// * `f` - A function that will be called with the incoming request topic, data, and
+    /// response buffer. This function is responsible for calling the handler.
     pub fn poll<E, F>(&mut self, f: F) -> Result<(), Error<Stack::Error>>
     where
         F: FnMut(&str, &[u8], &mut [u8]) -> Result<usize, E>,
