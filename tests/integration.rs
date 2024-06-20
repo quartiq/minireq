@@ -87,22 +87,23 @@ async fn main() {
     );
 
     // Construct a settings configuration interface.
-    let mut handlers = [None; 10];
-    let mut interface: minireq::Minireq<bool, _, _, minimq::broker::IpBroker> =
-        minireq::Minireq::new("minireq/integration/device", mqtt, &mut handlers[..]).unwrap();
+    let mut interface: minireq::Minireq<_, _, minimq::broker::IpBroker> =
+        minireq::Minireq::new("minireq/integration/device", mqtt).unwrap();
 
-    interface
-        .register("test", |exit, _req, _data, _out_buffer| {
-            *exit = true;
-            Ok(0)
-        })
-        .unwrap();
+    interface.subscribe("test").unwrap();
 
     // Update the client until the exit
     let mut should_exit = false;
+
     while !should_exit {
         interface
-            .poll(|handler, topic, data, buffer| handler(&mut should_exit, topic, data, buffer))
+            .poll(|topic, _data, _buffer| match topic {
+                "test" => {
+                    should_exit = true;
+                    Ok(0)
+                }
+                _ => Err("Unknown handler"),
+            })
             .unwrap();
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
