@@ -238,11 +238,10 @@ where
 
             let found_handler = handlers.iter().flatten().any(|handler| handler.0 == path);
             if !found_handler {
-                if let Ok(response) = minimq::Publication::new("Command is not subscribed")
-                    .properties(&[ResponseCode::Error.to_user_property()])
-                    .reply(properties)
-                    .qos(QoS::AtLeastOnce)
-                    .finish()
+                let response_properties = [ResponseCode::Error.to_user_property()];
+                if let Ok(response) =
+                    minimq::Publication::respond(None, properties, "Command is not subscribed")
+                        .map(|res| res.properties(&response_properties).qos(QoS::AtLeastOnce))
                 {
                     client.publish(response).ok();
                 }
@@ -252,31 +251,29 @@ where
 
             // Assume that the update will succeed. We will handle conditions when it doesn't later
             // when attempting transmission.
-            let props = [ResponseCode::Ok.to_user_property()];
-
-            let Ok(response) = minimq::DeferredPublication::new(|buf| f(path, message, buf))
-                .reply(properties)
-                .properties(&props)
-                .qos(QoS::AtLeastOnce)
-                .finish()
+            let response_properties = [ResponseCode::Ok.to_user_property()];
+            let Ok(response) =
+                minimq::Publication::respond(None, properties, |buf: &mut [u8]| {
+                    f(path, message, buf)
+                })
+                .map(|res| res.properties(&response_properties).qos(QoS::AtLeastOnce))
             else {
                 warn!("No response topic was provided with request: `{}`", path);
                 return;
             };
 
             if let Err(minimq::PubError::Serialization(err)) = client.publish(response) {
-                if let Ok(message) = minimq::DeferredPublication::new(|mut buf| {
-                    let start = buf.len();
-                    write!(buf, "{}", err).and_then(|_| Ok(start - buf.len()))
-                })
-                .properties(&[ResponseCode::Error.to_user_property()])
-                .reply(properties)
-                .qos(QoS::AtLeastOnce)
-                .finish()
+                let response_properties = [ResponseCode::Error.to_user_property()];
+                if let Ok(response) =
+                    minimq::Publication::respond(None, properties, |mut buf: &mut [u8]| {
+                        let start = buf.len();
+                        write!(buf, "{}", err).and_then(|_| Ok(start - buf.len()))
+                    })
+                    .map(|res| res.properties(&response_properties).qos(QoS::AtLeastOnce))
                 {
                     // Try to send the error as a best-effort. If we don't have enough
                     // buffer space to encode the error, there's nothing more we can do.
-                    client.publish(message).ok();
+                    client.publish(response).ok();
                 };
             }
         });
@@ -412,12 +409,9 @@ where
 
             mqtt.client()
                 .publish(
-                    minimq::Publication::new(b"{}")
+                    minimq::Publication::new(&topic, b"{}")
                         .qos(QoS::AtLeastOnce)
-                        .retain()
-                        .topic(&topic)
-                        .finish()
-                        .unwrap(),
+                        .retain(),
                 )
                 .map_err(|_| ())?;
 
