@@ -10,7 +10,10 @@
 //! automatically.
 //!
 //! ## Example
+//!
 //! ```no_run
+//! use core::net::{IpAddr, Ipv4Addr};
+//!
 //! use embedded_io::Write;
 //! # use embedded_nal::TcpClientStack;
 //!
@@ -36,7 +39,7 @@
 //!
 //! # let mut buffer = [0u8; 1024];
 //! # let stack = std_embedded_nal::Stack;
-//! # let localhost = embedded_nal::IpAddr::V4(embedded_nal::Ipv4Addr::new(127, 0, 0, 1));
+//! # let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
 //! let mqtt: minimq::Minimq<'_, _, _, minimq::broker::IpBroker> = minireq::minimq::Minimq::new(
 //! // Constructor
 //! #     stack,
