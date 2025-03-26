@@ -1,14 +1,18 @@
+use std::net::{IpAddr, Ipv4Addr};
+
 use std_embedded_time::StandardClock;
+
+use minimq::{broker::IpBroker, ConfigBuilder, Minimq};
 
 async fn client_task() {
     // Construct a Minimq client to the broker for publishing requests.
     let mut buffer = [0u8; 1024];
     let stack = std_embedded_nal::Stack;
-    let localhost = embedded_nal::IpAddr::V4(embedded_nal::Ipv4Addr::new(127, 0, 0, 1));
-    let mut mqtt: minimq::Minimq<'_, _, _, minimq::broker::IpBroker> = minimq::Minimq::new(
+    let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+    let mut mqtt: Minimq<'_, _, _, IpBroker> = Minimq::new(
         stack,
         StandardClock::default(),
-        minimq::ConfigBuilder::new(localhost.into(), &mut buffer).keepalive_interval(60),
+        ConfigBuilder::new(localhost.into(), &mut buffer).keepalive_interval(60),
     );
 
     // Wait for the broker connection
@@ -34,11 +38,8 @@ async fn client_task() {
     log::info!("Publishing error setting");
     mqtt.client()
         .publish(
-            minimq::Publication::new(b"true")
-                .topic("minireq/integration/device/command/test")
-                .properties(&properties)
-                .finish()
-                .unwrap(),
+            minimq::Publication::new("minireq/integration/device/command/test", b"true")
+                .properties(&properties),
         )
         .unwrap();
 
@@ -79,15 +80,15 @@ async fn main() {
 
     let mut buffer = [0u8; 1024];
     let stack = std_embedded_nal::Stack;
-    let localhost = embedded_nal::IpAddr::V4(embedded_nal::Ipv4Addr::new(127, 0, 0, 1));
-    let mqtt: minimq::Minimq<'_, _, _, minimq::broker::IpBroker> = minimq::Minimq::new(
+    let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+    let mqtt: Minimq<'_, _, _, IpBroker> = Minimq::new(
         stack,
         StandardClock::default(),
-        minimq::ConfigBuilder::new(localhost.into(), &mut buffer).keepalive_interval(60),
+        ConfigBuilder::new(localhost.into(), &mut buffer).keepalive_interval(60),
     );
 
     // Construct a settings configuration interface.
-    let mut interface: minireq::Minireq<_, _, minimq::broker::IpBroker> =
+    let mut interface: minireq::Minireq<_, _, IpBroker> =
         minireq::Minireq::new("minireq/integration/device", mqtt).unwrap();
 
     interface.subscribe("test").unwrap();
